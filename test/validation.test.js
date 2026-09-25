@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateSubmission } from '../src/validation.js';
+import { validateSubmission, validateRetestSubmission } from '../src/validation.js';
 
 function validBody() {
   return {
@@ -114,4 +114,44 @@ test('一次返回全部可定位问题', () => {
   assert.ok(paths.includes('tolerance'));
   assert.ok(paths.includes('fields[0].particles[0].id'));
   assert.ok(paths.includes('fields[1].particles[0].y'));
+});
+
+function validRetestBody() {
+  const body = validBody();
+  body.radius = 3;
+  body.fields.forEach((f) => f.particles.forEach((p) => { p.retestCost = 0; }));
+  return body;
+}
+
+test('复测提交：合法输入通过并展开 retestCosts（含 0 代价）', () => {
+  const body = validRetestBody();
+  body.fields[1].particles[0].retestCost = 7;
+  const r = validateRetestSubmission(body);
+  assert.equal(r.ok, true);
+  assert.equal(r.value.radius, 3);
+  assert.deepEqual(r.value.retestCosts, [0, 7, 0]);
+});
+
+test('复测提交：radius 与 retestCost 错误可定位', () => {
+  const body = validRetestBody();
+  body.radius = 1.5;
+  body.fields[0].particles[0].retestCost = -1;
+  body.fields[2].particles[0].retestCost = '2';
+  const r = validateRetestSubmission(body);
+  assert.equal(r.ok, false);
+  const paths = r.issues.map((i) => i.path);
+  assert.ok(paths.includes('radius'));
+  assert.ok(paths.includes('fields[0].particles[0].retestCost'));
+  assert.ok(paths.includes('fields[2].particles[0].retestCost'));
+});
+
+test('复测提交：底层草稿问题与复测字段问题同时返回', () => {
+  const body = validRetestBody();
+  body.fields[1].particles[0].category = '';
+  body.fields[2].particles[0].retestCost = false;
+  const r = validateRetestSubmission(body);
+  assert.equal(r.ok, false);
+  const paths = r.issues.map((i) => i.path);
+  assert.ok(paths.includes('fields[1].particles[0].category'));
+  assert.ok(paths.includes('fields[2].particles[0].retestCost'));
 });

@@ -4,8 +4,9 @@ import http from 'node:http';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { validateSubmission } from './validation.js';
+import { validateSubmission, validateRetestSubmission } from './validation.js';
 import { solveDeduplication, SolverLimitError } from './dedup.js';
+import { planNeighborRetest, RetestLimitError } from './retest.js';
 
 const SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(SRC_DIR, '..', 'public');
@@ -79,6 +80,40 @@ async function handleDeduplication(req, res) {
   }
 }
 
+async function handleNeighborRetest(req, res) {
+  let raw;
+  try {
+    raw = await readBody(req, MAX_BODY_BYTES);
+  } catch (err) {
+    return sendJson(res, err.statusCode || 400, { error: { message: err.message } });
+  }
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return sendJson(res, 400, {
+      error: { message: '请求体不是合法 JSON', issues: [{ path: '', message: 'JSON 解析失败' }] },
+    });
+  }
+  const validation = validateRetestSubmission(body);
+  if (!validation.ok) {
+    return sendJson(res, 400, {
+      error: { message: '输入不合规，请根据定位信息修正后重新提交（草稿已保留）', issues: validation.issues },
+    });
+  }
+  const { radius, retestCosts, ...draft } = validation.value;
+  try {
+    // 服务端按既有校验和去重规则重算当前最终颗粒，再联合选择复测集合
+    const result = planNeighborRetest(draft, radius, retestCosts);
+    return sendJson(res, 200, result);
+  } catch (err) {
+    if (err instanceof SolverLimitError || err instanceof RetestLimitError) {
+      return sendJson(res, 422, { error: { message: err.message } });
+    }
+    throw err;
+  }
+}
+
 async function serveStatic(pathname, res) {
   const rel = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.join(PUBLIC_DIR, rel);
@@ -108,6 +143,9 @@ export function createServer() {
       }
       if (req.method === 'POST' && pathname === '/api/particle-deduplications') {
         return await handleDeduplication(req, res);
+      }
+      if (req.method === 'POST' && pathname === '/api/neighbor-retest-plans') {
+        return await handleNeighborRetest(req, res);
       }
       if (req.method === 'GET' || req.method === 'HEAD') {
         return await serveStatic(pathname, res);

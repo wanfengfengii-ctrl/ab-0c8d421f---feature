@@ -25,6 +25,8 @@
       <div class="tolerance-row">
         <label for="tolerance">容差（滤膜坐标横 / 纵方向允许的最大偏差，整数）</label>
         <input id="tolerance" data-path="tolerance" type="number" step="1" min="0">
+        <label for="retest-radius">统一复测半径（异类近邻复测，整数）</label>
+        <input id="retest-radius" data-path="radius" type="number" step="1" min="0">
       </div>
 
       <div id="fields"></div>
@@ -39,12 +41,28 @@
     </section>
 
     <section class="panel hidden" id="result-panel">
-      <h2>② 裁决结果</h2>
+      <h2>② 去重裁决结果</h2>
       <div id="result-summary" class="result-summary"></div>
       <div id="result-particles"></div>
+
+      <div class="retest-block">
+        <div class="retest-head">
+          <h3>异类近邻复测计划</h3>
+          <button id="btn-retest" type="button" class="primary">在当前草稿上发起异类近邻复测</button>
+          <span id="retest-hint" class="hint"></span>
+        </div>
+        <p class="hint">对滤膜坐标横纵差均不超过复测半径、且聚合物类别不同的跨视野观测对联合选择复测集合：
+          依次最小化复测总代价、复测数量，并按视野与颗粒录入顺序稳定决胜。每条近邻证据至少复测其一端。</p>
+        <div id="retest-panel" class="hidden"></div>
+      </div>
+
       <details class="raw-json">
-        <summary>原始响应 JSON</summary>
+        <summary>原始响应 JSON（去重裁决）</summary>
         <pre id="result-json"></pre>
+      </details>
+      <details class="raw-json hidden" id="retest-json-wrap">
+        <summary>原始响应 JSON（复测计划）</summary>
+        <pre id="retest-json"></pre>
       </details>
     </section>
   </main>

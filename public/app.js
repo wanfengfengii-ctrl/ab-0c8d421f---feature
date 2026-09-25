@@ -6,13 +6,24 @@
   var MAX_FIELDS = 5;
 
   function newParticle() {
-    return { id: '', x: '', y: '', category: '' };
+    return { id: '', x: '', y: '', category: '', retestCost: '0' };
   }
   function newField(name) {
     return { name: name || '', offsetX: '0', offsetY: '0', particles: [newParticle()] };
   }
   function defaultState() {
-    return { tolerance: '5', fields: [newField('F1'), newField('F2'), newField('F3')] };
+    return { tolerance: '5', radius: '3', fields: [newField('F1'), newField('F2'), newField('F3')] };
+  }
+
+  function normalizeState(s) {
+    if (!s) return s;
+    if (s.radius === undefined) s.radius = '3';
+    (s.fields || []).forEach(function (f) {
+      (f.particles || []).forEach(function (p) {
+        if (p.retestCost === undefined) p.retestCost = '0';
+      });
+    });
+    return s;
   }
 
   function loadDraft() {
@@ -21,7 +32,7 @@
       if (!raw) return null;
       var s = JSON.parse(raw);
       if (!s || !Array.isArray(s.fields) || s.fields.length === 0) return null;
-      return s;
+      return normalizeState(s);
     } catch (e) {
       return null;
     }
@@ -38,12 +49,18 @@
   var fieldsEl = document.getElementById('fields');
   var issuesEl = document.getElementById('issues');
   var toleranceEl = document.getElementById('tolerance');
+  var radiusEl = document.getElementById('retest-radius');
   var addFieldBtn = document.getElementById('btn-add-field');
   var resultPanel = document.getElementById('result-panel');
   var resultSummary = document.getElementById('result-summary');
   var resultParticles = document.getElementById('result-particles');
   var resultJson = document.getElementById('result-json');
   var submitHint = document.getElementById('submit-hint');
+  var btnRetest = document.getElementById('btn-retest');
+  var retestHint = document.getElementById('retest-hint');
+  var retestPanel = document.getElementById('retest-panel');
+  var retestJson = document.getElementById('retest-json');
+  var retestJsonWrap = document.getElementById('retest-json-wrap');
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -53,6 +70,7 @@
 
   function render() {
     toleranceEl.value = state.tolerance;
+    radiusEl.value = state.radius;
     var html = state.fields.map(function (f, fi) {
       var rows = f.particles.map(function (p, pi) {
         return '<tr>' +
@@ -60,6 +78,7 @@
           '<td><input data-path="fields[' + fi + '].particles[' + pi + '].x" data-field="' + fi + '" data-particle="' + pi + '" data-key="x" type="number" step="1" value="' + esc(p.x) + '"></td>' +
           '<td><input data-path="fields[' + fi + '].particles[' + pi + '].y" data-field="' + fi + '" data-particle="' + pi + '" data-key="y" type="number" step="1" value="' + esc(p.y) + '"></td>' +
           '<td><input data-path="fields[' + fi + '].particles[' + pi + '].category" data-field="' + fi + '" data-particle="' + pi + '" data-key="category" list="categories" value="' + esc(p.category) + '" placeholder="PE / PP / …"></td>' +
+          '<td class="cost-cell"><input data-path="fields[' + fi + '].particles[' + pi + '].retestCost" data-field="' + fi + '" data-particle="' + pi + '" data-key="retestCost" type="number" step="1" min="0" value="' + esc(p.retestCost) + '" title="复测代价（非负整数）"></td>' +
           '<td><button type="button" class="small" data-action="remove-particle" data-field="' + fi + '" data-particle="' + pi + '">删除</button></td>' +
           '</tr>';
       }).join('');
@@ -72,7 +91,7 @@
           '<span class="spacer"></span>' +
           '<button type="button" class="small" data-action="remove-field" data-field="' + fi + '"' + (state.fields.length <= MIN_FIELDS ? ' disabled' : '') + '>删除视野</button>' +
         '</div>' +
-        '<table class="particles"><thead><tr><th>颗粒编号</th><th>X（视野内）</th><th>Y（视野内）</th><th>聚合物类别</th><th></th></tr></thead>' +
+        '<table class="particles"><thead><tr><th>颗粒编号</th><th>X（视野内）</th><th>Y（视野内）</th><th>聚合物类别</th><th title="该候选进入复测集合时的代价">复测代价</th><th></th></tr></thead>' +
         '<tbody>' + rows + '</tbody></table>' +
         '<button type="button" class="ghost small" data-action="add-particle" data-field="' + fi + '">＋ 添加颗粒</button>' +
         '</div>';
@@ -82,11 +101,19 @@
   }
 
   // 输入变更：更新状态并保存草稿（不重渲染，避免打断输入）
+  // 草稿一旦修改，旧复测计划即不再可信，必须清除（裁决面板保持原样，下次发起时重算）
   document.addEventListener('input', function (e) {
     var t = e.target;
     if (t === toleranceEl) {
       state.tolerance = t.value;
       saveDraft();
+      clearRetestPlan();
+      return;
+    }
+    if (t === radiusEl) {
+      state.radius = t.value;
+      saveDraft();
+      clearRetestPlan();
       return;
     }
     if (!t.dataset || t.dataset.field === undefined || !t.dataset.key) return;
@@ -99,6 +126,7 @@
       f[t.dataset.key] = t.value;
     }
     saveDraft();
+    clearRetestPlan();
   });
 
   // 增删视野 / 颗粒
@@ -117,6 +145,7 @@
       return;
     }
     saveDraft();
+    clearRetestPlan();
     render();
   });
 
@@ -140,27 +169,28 @@
   document.getElementById('btn-sample').addEventListener('click', function () {
     state = {
       tolerance: '5',
+      radius: '3',
       fields: [
         {
           name: 'F1', offsetX: '0', offsetY: '0',
           particles: [
-            { id: 'A1', x: '10', y: '10', category: 'PE' },
-            { id: 'A2', x: '40', y: '40', category: 'PP' },
-            { id: 'A3', x: '90', y: '10', category: 'PE' },
+            { id: 'A1', x: '10', y: '10', category: 'PE', retestCost: '2' },
+            { id: 'A2', x: '40', y: '40', category: 'PP', retestCost: '5' },
+            { id: 'A3', x: '90', y: '10', category: 'PE', retestCost: '3' },
           ],
         },
         {
           name: 'F2', offsetX: '100', offsetY: '0',
           particles: [
-            { id: 'B1', x: '-8', y: '12', category: 'PE' },
-            { id: 'B2', x: '-6', y: '9', category: 'PE' },
+            { id: 'B1', x: '-8', y: '12', category: 'PE', retestCost: '4' },
+            { id: 'B2', x: '-6', y: '9', category: 'PE', retestCost: '1' },
           ],
         },
         {
           name: 'F3', offsetX: '0', offsetY: '100',
           particles: [
-            { id: 'C1', x: '40', y: '-58', category: 'PP' },
-            { id: 'C2', x: '5', y: '5', category: 'PET' },
+            { id: 'C1', x: '40', y: '-58', category: 'PP', retestCost: '6' },
+            { id: 'C2', x: '5', y: '5', category: 'PET', retestCost: '2' },
           ],
         },
       ],
@@ -204,6 +234,21 @@
     resultPanel.classList.add('hidden');
   }
 
+  // 仅清除复测计划（半径或复测代价修改时）
+  function clearRetestPlan() {
+    retestPanel.classList.add('hidden');
+    retestPanel.innerHTML = '';
+    retestJsonWrap.classList.add('hidden');
+    retestJson.textContent = '';
+    retestHint.textContent = '';
+  }
+
+  // 草稿实质修改后：裁决与复测计划同时失效（当前仅“清空草稿”使用）
+  function invalidateResults() {
+    clearRetestPlan();
+    hideResult();
+  }
+
   function renderResult(result) {
     resultSummary.innerHTML =
       '最终颗粒总数：<span class="ok">' + result.totalParticles + '</span>' +
@@ -235,6 +280,62 @@
     resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  function obsLabel(o) {
+    return esc(o.fieldName) + ' / ' + esc(o.particleId) +
+      '（类别 ' + esc(o.category) + '，滤膜 (' + o.filterX + ', ' + o.filterY + ')，最终颗粒 #' + o.particle + '）';
+  }
+
+  function renderRetestPlan(plan) {
+    if (plan.neighborPairCount === 0) {
+      retestPanel.innerHTML =
+        '<div class="retest-empty">本次没有需排除的异类近邻：半径 ' + plan.radius +
+        ' 内不存在跨视野且聚合物类别不同的观测对，无需复测。</div>';
+      retestPanel.classList.remove('hidden');
+      return;
+    }
+
+    var selectedRows = plan.selected.map(function (s) {
+      var evidence = s.covers.map(function (c) {
+        return '<li><code>' + esc(c.pairKey) + '</code> 与 ' + obsLabel(c.other) +
+          '（横差 ' + c.dx + '、纵差 ' + c.dy + '，曼哈顿差 ' + c.manhattan + '）</li>';
+      }).join('');
+      return '<div class="retest-item">' +
+        '<header><span class="pid">复测 #' + s.seq + '</span> ' + obsLabel(s) +
+        '<span class="badge">代价 ' + s.cost + '</span>' +
+        '<span>覆盖近邻证据 ' + s.covers.length + ' 条</span></header>' +
+        '<ul class="evidence">' + evidence + '</ul>' +
+        '</div>';
+    }).join('');
+
+    var unselectedRows = plan.unselected.length === 0
+      ? '<span class="none">无（参与近邻对的观测全部入选）</span>'
+      : plan.unselected.map(function (u) {
+          return '<span class="link-chip">' + obsLabel(u) + '（代价 ' + u.cost + '）</span>';
+        }).join('');
+
+    var pairRows = plan.pairs.map(function (pr) {
+      return '<tr><td><code>' + esc(pr.key) + '</code></td>' +
+        '<td>' + obsLabel(pr.a) + '</td>' +
+        '<td>' + obsLabel(pr.b) + '</td>' +
+        '<td>' + pr.dx + ' / ' + pr.dy + '</td>' +
+        '<td>' + esc(pr.coveredBy) + '</td></tr>';
+    }).join('');
+
+    retestPanel.innerHTML =
+      '<div class="retest-summary">近邻证据 ' + plan.neighborPairCount + ' 对、参与观测 ' +
+        plan.involvedObservationCount + ' 个；复测集合 <span class="ok">' + plan.retestCount +
+        '</span> 项，最小总代价 <span class="ok">' + plan.totalRetestCost + '</span>' +
+        '（统一半径 ' + plan.radius + '）。</div>' +
+      '<h4>复测清单（每项含其覆盖的近邻证据与对应最终颗粒）</h4>' +
+      selectedRows +
+      '<h4>未选观测（参与近邻对但不在复测集合中）</h4>' +
+      '<div class="links">' + unselectedRows + '</div>' +
+      '<details class="pair-details"><summary>全部近邻证据（' + plan.neighborPairCount + ' 对）</summary>' +
+      '<table class="pair-table"><thead><tr><th>证据</th><th>观测 A</th><th>观测 B</th><th>横差 / 纵差</th><th>覆盖端</th></tr></thead>' +
+      '<tbody>' + pairRows + '</tbody></table></details>';
+    retestPanel.classList.remove('hidden');
+  }
+
   // 数值转换：空串 → null、非数字 → 原样字符串，交由服务端给出可定位反馈
   function num(v) {
     var s = String(v == null ? '' : v).trim();
@@ -243,21 +344,33 @@
     return Number.isNaN(n) ? s : n;
   }
 
-  document.getElementById('btn-submit').addEventListener('click', function () {
-    clearIssues();
-    hideResult();
-    var payload = {
+  function buildPayload(includeRetest) {
+    return {
       tolerance: num(state.tolerance),
       fields: state.fields.map(function (f, fi) {
         return {
           name: String(f.name || '').trim() || ('F' + (fi + 1)),
           offset: { x: num(f.offsetX), y: num(f.offsetY) },
           particles: f.particles.map(function (p) {
-            return { id: String(p.id == null ? '' : p.id), x: num(p.x), y: num(p.y), category: String(p.category == null ? '' : p.category) };
+            var row = {
+              id: String(p.id == null ? '' : p.id),
+              x: num(p.x),
+              y: num(p.y),
+              category: String(p.category == null ? '' : p.category),
+            };
+            if (includeRetest) row.retestCost = num(p.retestCost == null ? '0' : p.retestCost);
+            return row;
           }),
         };
       }),
     };
+  }
+
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    clearIssues();
+    hideResult();
+    clearRetestPlan();
+    var payload = buildPayload(false);
 
     submitHint.textContent = '裁决中…';
     fetch('/api/particle-deduplications', {
@@ -284,6 +397,43 @@
       .catch(function () {
         showIssues([{ path: '', message: '网络或服务器错误，请稍后重试（草稿已保留）' }]);
         submitHint.textContent = '';
+      });
+  });
+
+  btnRetest.addEventListener('click', function () {
+    // 服务端会基于同一草稿重算最终颗粒；发起前先清除旧计划，失败也不保留旧计划
+    clearRetestPlan();
+    clearIssues();
+    var payload = buildPayload(true);
+    payload.radius = num(state.radius);
+
+    retestHint.textContent = '复测计划计算中…';
+    fetch('/api/neighbor-retest-plans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then(function (res) {
+        return res.json().then(function (body) { return { res: res, body: body }; });
+      })
+      .then(function (r) {
+        if (!r.res.ok) {
+          var err = (r.body && r.body.error) || {};
+          var issues = Array.isArray(err.issues) && err.issues.length > 0
+            ? err.issues
+            : [{ path: '', message: err.message || ('请求失败（HTTP ' + r.res.status + '）') }];
+          showIssues(issues, err.message);
+          retestHint.textContent = '';
+          return;
+        }
+        retestHint.textContent = '复测计划已按唯一最小代价清单生成。';
+        renderRetestPlan(r.body);
+        retestJson.textContent = JSON.stringify(r.body, null, 2);
+        retestJsonWrap.classList.remove('hidden');
+      })
+      .catch(function () {
+        showIssues([{ path: '', message: '网络或服务器错误，复测计划未生成（草稿已保留）' }]);
+        retestHint.textContent = '';
       });
   });
 

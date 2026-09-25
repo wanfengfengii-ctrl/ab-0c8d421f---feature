@@ -140,3 +140,60 @@ export function validateSubmission(body) {
   };
   return { ok: true, value };
 }
+
+export const RETEST_VALIDATION_LIMITS = Object.freeze({
+  maxRadius: 1000000,
+  maxRetestCost: 1000000,
+});
+
+/**
+ * 异类近邻复测计划提交校验。
+ * 在去重草稿（同 validateSubmission 规则）基础上额外要求：
+ *  - radius：统一复测半径，0 ~ 1000000 的整数；
+ *  - particles[j].retestCost：每个颗粒候选的复测代价，非负整数。
+ * 返回的 value 在去重草稿归一化结果上附加 radius 与按观测全局顺序展开的 retestCosts。
+ */
+export function validateRetestSubmission(body) {
+  const base = validateSubmission(body);
+  const issues = base.ok ? [] : [...base.issues];
+  const push = (path, message) => {
+    if (issues.length < VALIDATION_LIMITS.maxIssues) issues.push({ path, message });
+  };
+
+  const hasRadiusError = !isPlainObject(body)
+    || typeof body.radius !== 'number'
+    || !Number.isInteger(body.radius)
+    || body.radius < 0
+    || body.radius > RETEST_VALIDATION_LIMITS.maxRadius;
+  if (hasRadiusError) {
+    push('radius', `复测半径必须是 0 ~ ${RETEST_VALIDATION_LIMITS.maxRadius} 的整数`);
+  }
+
+  const retestCosts = [];
+  if (isPlainObject(body) && Array.isArray(body.fields)) {
+    body.fields.forEach((field, fi) => {
+      if (!isPlainObject(field) || !Array.isArray(field.particles)) return;
+      field.particles.forEach((p, pi) => {
+        if (!isPlainObject(p)) return;
+        const c = p.retestCost;
+        if (typeof c !== 'number' || !Number.isInteger(c) || c < 0 || c > RETEST_VALIDATION_LIMITS.maxRetestCost) {
+          push(
+            `fields[${fi}].particles[${pi}].retestCost`,
+            `复测代价必须是 0 ~ ${RETEST_VALIDATION_LIMITS.maxRetestCost} 的非负整数`,
+          );
+        } else {
+          retestCosts.push({ fi, pi, value: c });
+        }
+      });
+    });
+  }
+
+  if (issues.length > 0) return { ok: false, issues };
+
+  const value = base.value;
+  const costByPos = new Map(retestCosts.map((r) => [`${r.fi}:${r.pi}`, r.value]));
+  value.radius = body.radius;
+  value.retestCosts = value.fields.flatMap((f, fi) =>
+    f.particles.map((p, pi) => costByPos.get(`${fi}:${pi}`)));
+  return { ok: true, value };
+}
