@@ -16,6 +16,11 @@ export async function runSmoke(base) {
     headers: { 'Content-Type': 'application/json' },
     body: raw ? body : JSON.stringify(body),
   });
+  const postPlan = (body, raw = false) => fetch(`${base}/api/particle-retest-plans`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: raw ? body : JSON.stringify(body),
+  });
 
   // 1. 健康检查
   try {
@@ -99,6 +104,71 @@ export async function runSmoke(base) {
     check('未知接口 → 404', res.status === 404, `HTTP ${res.status}`);
   } catch (err) {
     check('未知接口', false, String(err));
+  }
+
+  // 7. 异类近邻复测计划：服务端先重算去重，再在半径内找异类近邻对并求最小代价覆盖。
+  //    半径 2：A1(0,0,PE) 与 C1(0,1,PET) 距 (0,1)、B1(0,3,PP) 与 C1 距 (0,2)，
+  //    而 A1-B1 纵差 3 > 2 不配对 —— 仅复测代价最低的 C1 即覆盖两对。
+  try {
+    const res = await postPlan({
+      tolerance: 1,
+      radius: 2,
+      fields: [
+        { name: 'F1', offset: { x: 0, y: 0 }, particles: [{ id: 'A1', x: 0, y: 0, category: 'PE', retestCost: 9 }] },
+        { name: 'F2', offset: { x: 0, y: 0 }, particles: [{ id: 'B1', x: 0, y: 3, category: 'PP', retestCost: 9 }] },
+        { name: 'F3', offset: { x: 0, y: 0 }, particles: [{ id: 'C1', x: 0, y: 1, category: 'PET', retestCost: 1 }] },
+      ],
+    });
+    const body = await res.json();
+    check('POST 复测计划 → 200', res.status === 200, `HTTP ${res.status}`);
+    const plan = body.plan || {};
+    check('服务端重算最终颗粒数为 3', body.deduplicatedParticles === 3, String(body.deduplicatedParticles));
+    check('异类近邻对为 2、参与观测为 3', plan.pairCount === 2 && plan.participantCount === 3,
+      `pairs=${plan.pairCount} participants=${plan.participantCount}`);
+    check('唯一最小代价清单仅复测 C1（总代价 1）',
+      plan.selectedCount === 1 && plan.totalRetestCost === 1
+        && plan.retests[0].observation.particleId === 'C1',
+      JSON.stringify((plan.retests || []).map((r) => r.observation.particleId)));
+    const evIds = (plan.retests[0].coveredPairs || []).map((e) => e.observation.particleId).sort();
+    check('C1 的复测证据覆盖 A1、B1，且对应不同最终颗粒',
+      JSON.stringify(evIds) === JSON.stringify(['A1', 'B1'])
+        && plan.retests[0].observation.finalParticleId !== plan.retests[0].coveredPairs[0].observation.finalParticleId,
+      evIds.join(' | '));
+    check('未选观测为 A1、B1',
+      JSON.stringify((plan.unselectedObservations || []).map((o) => o.particleId).sort()) === JSON.stringify(['A1', 'B1']),
+      JSON.stringify((plan.unselectedObservations || []).map((o) => o.particleId)));
+  } catch (err) {
+    check('POST 复测计划', false, String(err));
+  }
+
+  // 8. 复测计划：无异类近邻对时返回空计划；缺复测代价返回可定位 400
+  try {
+    const empty = await postPlan({
+      tolerance: 0, radius: 0,
+      fields: [
+        { offset: { x: 0, y: 0 }, particles: [{ id: 'A1', x: 0, y: 0, category: 'PE', retestCost: 1 }] },
+        { offset: { x: 9, y: 9 }, particles: [{ id: 'B1', x: 0, y: 0, category: 'PP', retestCost: 1 }] },
+        { offset: { x: 18, y: 18 }, particles: [{ id: 'C1', x: 0, y: 0, category: 'PET', retestCost: 1 }] },
+      ],
+    });
+    const emptyBody = await empty.json();
+    check('无异类近邻对 → 200 且空计划', empty.status === 200 && emptyBody.plan.pairCount === 0
+      && emptyBody.plan.selectedCount === 0 && emptyBody.plan.retests.length === 0, `HTTP ${empty.status}`);
+
+    const bad = await postPlan({
+      tolerance: 0, radius: 0,
+      fields: [
+        { offset: { x: 0, y: 0 }, particles: [{ id: 'A1', x: 0, y: 0, category: 'PE' }] },
+        { offset: { x: 0, y: 0 }, particles: [{ id: 'B1', x: 0, y: 0, category: 'PP', retestCost: 1 }] },
+        { offset: { x: 9, y: 9 }, particles: [{ id: 'C1', x: 0, y: 0, category: 'PET', retestCost: 1 }] },
+      ],
+    });
+    const badBody = await bad.json();
+    const paths = (badBody.error && Array.isArray(badBody.error.issues)) ? badBody.error.issues.map((i) => i.path) : [];
+    check('缺复测代价 → 400 且定位到 retestCost', bad.status === 400
+      && paths.includes('fields[0].particles[0].retestCost'), paths.join(' | '));
+  } catch (err) {
+    check('复测计划空计划 / 校验', false, String(err));
   }
 
   return results;

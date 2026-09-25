@@ -300,14 +300,11 @@ const round2 = (v) => {
 };
 
 /**
- * 求解去重裁决。
- * @param {{tolerance:number, fields:Array}} input 已通过校验并归一化的输入
- * @returns 裁决结果（最终颗粒、观测归属、代表坐标、类别、所选关联、总数）
+ * 展开观测：全局顺序 = 视野录入顺序 → 视野内录入顺序；
+ * 同时把每个观测换算到滤膜坐标（视野平移位置 + 视野内坐标）。
  */
-export function solveDeduplication(input) {
-  const { tolerance, fields } = input;
-
-  // 展开观测：全局顺序 = 视野录入顺序 → 视野内录入顺序
+export function expandObservations(input) {
+  const { fields } = input;
   const observations = [];
   fields.forEach((field, fieldIndex) => {
     field.particles.forEach((p, particleIndex) => {
@@ -324,6 +321,18 @@ export function solveDeduplication(input) {
       });
     });
   });
+  return { observations };
+}
+
+/**
+ * 求解去重裁决。
+ * @param {{tolerance:number, fields:Array}} input 已通过校验并归一化的输入
+ * @returns 裁决结果（最终颗粒、观测归属、代表坐标、类别、所选关联、总数）
+ */
+export function solveDeduplication(input) {
+  const { tolerance, fields } = input;
+
+  const { observations } = expandObservations(input);
   const n = observations.length;
 
   // 候选关联：不同视野、类别相同、滤膜坐标横纵差均 ≤ 容差

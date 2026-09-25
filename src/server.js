@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { validateSubmission } from './validation.js';
 import { solveDeduplication, SolverLimitError } from './dedup.js';
+import { buildRetestPlan } from './retest.js';
 
 const SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(SRC_DIR, '..', 'public');
@@ -79,6 +80,47 @@ async function handleDeduplication(req, res) {
   }
 }
 
+async function handleRetestPlan(req, res) {
+  let raw;
+  try {
+    raw = await readBody(req, MAX_BODY_BYTES);
+  } catch (err) {
+    return sendJson(res, err.statusCode || 400, { error: { message: err.message } });
+  }
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return sendJson(res, 400, {
+      error: { message: '请求体不是合法 JSON', issues: [{ path: '', message: 'JSON 解析失败' }] },
+    });
+  }
+  // 同一草稿：沿用既有校验规则，另校验统一复测半径与每候选复测代价
+  const validation = validateSubmission(body, { retest: true });
+  if (!validation.ok) {
+    return sendJson(res, 400, {
+      error: { message: '输入不合规，请根据定位信息修正后重新提交（草稿已保留）', issues: validation.issues },
+    });
+  }
+  try {
+    // 必须先按既有校验和去重规则重算当前最终颗粒，再据此构造复测计划
+    const dedupResult = solveDeduplication(validation.value);
+    const plan = buildRetestPlan(validation.value, dedupResult);
+    return sendJson(res, 200, {
+      tolerance: validation.value.tolerance,
+      fieldCount: dedupResult.fieldCount,
+      observationCount: dedupResult.observationCount,
+      deduplicatedParticles: dedupResult.totalParticles,
+      plan,
+    });
+  } catch (err) {
+    if (err instanceof SolverLimitError) {
+      return sendJson(res, 422, { error: { message: err.message } });
+    }
+    throw err;
+  }
+}
+
 async function serveStatic(pathname, res) {
   const rel = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.join(PUBLIC_DIR, rel);
@@ -108,6 +150,9 @@ export function createServer() {
       }
       if (req.method === 'POST' && pathname === '/api/particle-deduplications') {
         return await handleDeduplication(req, res);
+      }
+      if (req.method === 'POST' && pathname === '/api/particle-retest-plans') {
+        return await handleRetestPlan(req, res);
       }
       if (req.method === 'GET' || req.method === 'HEAD') {
         return await serveStatic(pathname, res);

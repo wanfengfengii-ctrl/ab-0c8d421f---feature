@@ -13,6 +13,8 @@ export const VALIDATION_LIMITS = Object.freeze({
   maxTotalParticles: 2000,
   maxCoordinate: 1000000,
   maxTolerance: 1000000,
+  maxRadius: 1000000,
+  maxRetestCost: 1000000,
   maxIdLength: 64,
   maxCategoryLength: 50,
   maxFieldNameLength: 50,
@@ -21,7 +23,8 @@ export const VALIDATION_LIMITS = Object.freeze({
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-export function validateSubmission(body) {
+export function validateSubmission(body, options = {}) {
+  const retestMode = options.retest === true;
   const issues = [];
   const push = (path, message) => {
     if (issues.length < VALIDATION_LIMITS.maxIssues) issues.push({ path, message });
@@ -35,6 +38,16 @@ export function validateSubmission(body) {
   const t = body.tolerance;
   if (typeof t !== 'number' || !Number.isInteger(t) || t < 0 || t > VALIDATION_LIMITS.maxTolerance) {
     push('tolerance', `容差必须是 0 ~ ${VALIDATION_LIMITS.maxTolerance} 的整数`);
+  }
+
+  // 统一复测半径（异类近邻复测计划）
+  let radius = null;
+  if (retestMode) {
+    radius = body.radius;
+    if (typeof radius !== 'number' || !Number.isInteger(radius) || radius < 0 || radius > VALIDATION_LIMITS.maxRadius) {
+      push('radius', `复测半径必须是 0 ~ ${VALIDATION_LIMITS.maxRadius} 的整数`);
+      radius = null;
+    }
   }
 
   // 视野列表
@@ -115,6 +128,14 @@ export function validateSubmission(body) {
       } else if (c.trim().length > VALIDATION_LIMITS.maxCategoryLength) {
         push(`${pp}.category`, `聚合物类别长度不能超过 ${VALIDATION_LIMITS.maxCategoryLength} 字符`);
       }
+
+      // 复测代价（仅异类近邻复测计划要求）：非负整数
+      if (retestMode) {
+        const cost = p.retestCost;
+        if (typeof cost !== 'number' || !Number.isInteger(cost) || cost < 0 || cost > VALIDATION_LIMITS.maxRetestCost) {
+          push(`${pp}.retestCost`, `复测代价必须是 0 ~ ${VALIDATION_LIMITS.maxRetestCost} 的非负整数`);
+        }
+      }
     });
   });
 
@@ -130,13 +151,18 @@ export function validateSubmission(body) {
     fields: fields.map((f, fi) => ({
       name: typeof f.name === 'string' && f.name.trim().length > 0 ? f.name.trim() : `F${fi + 1}`,
       offset: { x: f.offset.x, y: f.offset.y },
-      particles: f.particles.map((p) => ({
-        id: p.id.trim(),
-        x: p.x,
-        y: p.y,
-        category: p.category.trim(),
-      })),
+      particles: f.particles.map((p) => {
+        const normalized = {
+          id: p.id.trim(),
+          x: p.x,
+          y: p.y,
+          category: p.category.trim(),
+        };
+        if (retestMode) normalized.retestCost = p.retestCost;
+        return normalized;
+      }),
     })),
   };
+  if (retestMode) value.radius = radius;
   return { ok: true, value };
 }

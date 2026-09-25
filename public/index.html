@@ -25,6 +25,8 @@
       <div class="tolerance-row">
         <label for="tolerance">容差（滤膜坐标横 / 纵方向允许的最大偏差，整数）</label>
         <input id="tolerance" data-path="tolerance" type="number" step="1" min="0">
+        <label for="radius" class="radius-label">异类近邻复测半径（横 / 纵差均不超过时需复测排查，整数）</label>
+        <input id="radius" data-path="radius" type="number" step="1" min="0">
       </div>
 
       <div id="fields"></div>
@@ -39,12 +41,33 @@
     </section>
 
     <section class="panel hidden" id="result-panel">
-      <h2>② 裁决结果</h2>
-      <div id="result-summary" class="result-summary"></div>
-      <div id="result-particles"></div>
+      <h2>② 裁决结果与异类近邻复测计划</h2>
+      <div class="result-grid">
+        <div class="result-col" id="verdict-col">
+          <h3>去重裁决</h3>
+          <div id="result-summary" class="result-summary"></div>
+          <div id="result-particles"></div>
+        </div>
+        <div class="result-col" id="plan-col">
+          <div class="plan-head">
+            <h3>异类近邻复测计划</h3>
+            <button id="btn-retest" class="primary" type="button">发起异类近邻复测计划</button>
+          </div>
+          <p class="hint">去重裁决完成后，在同一草稿上按统一复测半径找出类别不同却距离过近的观测对，
+            联合选出唯一的最小总代价复测清单；输入一旦修改，旧计划立即作废。</p>
+          <div id="plan-hint" class="hint"></div>
+          <div id="plan-summary" class="plan-summary"></div>
+          <div id="plan-retests"></div>
+          <div id="plan-unselected"></div>
+        </div>
+      </div>
       <details class="raw-json">
-        <summary>原始响应 JSON</summary>
+        <summary>裁决原始响应 JSON</summary>
         <pre id="result-json"></pre>
+      </details>
+      <details class="raw-json" id="plan-json-wrap" hidden>
+        <summary>复测计划原始响应 JSON</summary>
+        <pre id="plan-json"></pre>
       </details>
     </section>
   </main>

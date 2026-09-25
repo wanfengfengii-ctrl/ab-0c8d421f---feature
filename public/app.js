@@ -6,13 +6,13 @@
   var MAX_FIELDS = 5;
 
   function newParticle() {
-    return { id: '', x: '', y: '', category: '' };
+    return { id: '', x: '', y: '', category: '', retestCost: '' };
   }
   function newField(name) {
     return { name: name || '', offsetX: '0', offsetY: '0', particles: [newParticle()] };
   }
   function defaultState() {
-    return { tolerance: '5', fields: [newField('F1'), newField('F2'), newField('F3')] };
+    return { tolerance: '5', radius: '5', fields: [newField('F1'), newField('F2'), newField('F3')] };
   }
 
   function loadDraft() {
@@ -21,6 +21,15 @@
       if (!raw) return null;
       var s = JSON.parse(raw);
       if (!s || !Array.isArray(s.fields) || s.fields.length === 0) return null;
+      // 兼容旧版草稿：补齐复测半径与每候选复测代价字段
+      if (s.radius === undefined) s.radius = '';
+      s.fields.forEach(function (f) {
+        if (f.offsetX === undefined) f.offsetX = '0';
+        if (f.offsetY === undefined) f.offsetY = '0';
+        (f.particles || []).forEach(function (p) {
+          if (p.retestCost === undefined) p.retestCost = '';
+        });
+      });
       return s;
     } catch (e) {
       return null;
@@ -38,12 +47,27 @@
   var fieldsEl = document.getElementById('fields');
   var issuesEl = document.getElementById('issues');
   var toleranceEl = document.getElementById('tolerance');
+  var radiusEl = document.getElementById('radius');
   var addFieldBtn = document.getElementById('btn-add-field');
   var resultPanel = document.getElementById('result-panel');
   var resultSummary = document.getElementById('result-summary');
   var resultParticles = document.getElementById('result-particles');
   var resultJson = document.getElementById('result-json');
   var submitHint = document.getElementById('submit-hint');
+  var planRetestsEl = document.getElementById('plan-retests');
+  var planUnselectedEl = document.getElementById('plan-unselected');
+  var planSummaryEl = document.getElementById('plan-summary');
+  var planHintEl = document.getElementById('plan-hint');
+  var planJsonEl = document.getElementById('plan-json');
+  var planJsonWrap = document.getElementById('plan-json-wrap');
+  var planButton = document.getElementById('btn-retest');
+
+  // 去重裁决结果与复测计划均只对应“最后一次成功请求时的草稿”；
+  // 草稿的任何修改都立即作废旧计划（与裁决结果一并清除），绝不展示陈旧内容。
+  var lastResult = null;
+  var lastPlan = null;
+  var planRequestId = 0;
+  var verdictStale = false;
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -53,6 +77,7 @@
 
   function render() {
     toleranceEl.value = state.tolerance;
+    radiusEl.value = state.radius;
     var html = state.fields.map(function (f, fi) {
       var rows = f.particles.map(function (p, pi) {
         return '<tr>' +
@@ -60,6 +85,7 @@
           '<td><input data-path="fields[' + fi + '].particles[' + pi + '].x" data-field="' + fi + '" data-particle="' + pi + '" data-key="x" type="number" step="1" value="' + esc(p.x) + '"></td>' +
           '<td><input data-path="fields[' + fi + '].particles[' + pi + '].y" data-field="' + fi + '" data-particle="' + pi + '" data-key="y" type="number" step="1" value="' + esc(p.y) + '"></td>' +
           '<td><input data-path="fields[' + fi + '].particles[' + pi + '].category" data-field="' + fi + '" data-particle="' + pi + '" data-key="category" list="categories" value="' + esc(p.category) + '" placeholder="PE / PP / …"></td>' +
+          '<td><input data-path="fields[' + fi + '].particles[' + pi + '].retestCost" data-field="' + fi + '" data-particle="' + pi + '" data-key="retestCost" type="number" step="1" min="0" value="' + esc(p.retestCost) + '" placeholder="0" class="cost-input"></td>' +
           '<td><button type="button" class="small" data-action="remove-particle" data-field="' + fi + '" data-particle="' + pi + '">删除</button></td>' +
           '</tr>';
       }).join('');
@@ -72,7 +98,7 @@
           '<span class="spacer"></span>' +
           '<button type="button" class="small" data-action="remove-field" data-field="' + fi + '"' + (state.fields.length <= MIN_FIELDS ? ' disabled' : '') + '>删除视野</button>' +
         '</div>' +
-        '<table class="particles"><thead><tr><th>颗粒编号</th><th>X（视野内）</th><th>Y（视野内）</th><th>聚合物类别</th><th></th></tr></thead>' +
+        '<table class="particles"><thead><tr><th>颗粒编号</th><th>X（视野内）</th><th>Y（视野内）</th><th>聚合物类别</th><th>复测代价</th><th></th></tr></thead>' +
         '<tbody>' + rows + '</tbody></table>' +
         '<button type="button" class="ghost small" data-action="add-particle" data-field="' + fi + '">＋ 添加颗粒</button>' +
         '</div>';
@@ -81,12 +107,27 @@
     addFieldBtn.disabled = state.fields.length >= MAX_FIELDS;
   }
 
+  // 草稿被修改：令在途复测响应失效
+  function invalidateDerived() {
+    lastPlan = null;
+    verdictStale = true;
+    planRequestId += 1;
+    renderPlan(null);
+  }
+
   // 输入变更：更新状态并保存草稿（不重渲染，避免打断输入）
   document.addEventListener('input', function (e) {
     var t = e.target;
     if (t === toleranceEl) {
       state.tolerance = t.value;
       saveDraft();
+      invalidateDerived();
+      return;
+    }
+    if (t === radiusEl) {
+      state.radius = t.value;
+      saveDraft();
+      invalidateDerived();
       return;
     }
     if (!t.dataset || t.dataset.field === undefined || !t.dataset.key) return;
@@ -99,6 +140,7 @@
       f[t.dataset.key] = t.value;
     }
     saveDraft();
+    invalidateDerived();
   });
 
   // 增删视野 / 颗粒
@@ -117,6 +159,7 @@
       return;
     }
     saveDraft();
+    invalidateDerived();
     render();
   });
 
@@ -124,6 +167,7 @@
     if (state.fields.length < MAX_FIELDS) {
       state.fields.push(newField());
       saveDraft();
+      invalidateDerived();
       render();
     }
   });
@@ -140,27 +184,29 @@
   document.getElementById('btn-sample').addEventListener('click', function () {
     state = {
       tolerance: '5',
+      radius: '3',
       fields: [
         {
           name: 'F1', offsetX: '0', offsetY: '0',
           particles: [
-            { id: 'A1', x: '10', y: '10', category: 'PE' },
-            { id: 'A2', x: '40', y: '40', category: 'PP' },
-            { id: 'A3', x: '90', y: '10', category: 'PE' },
+            { id: 'A1', x: '10', y: '10', category: 'PE', retestCost: '4' },
+            { id: 'A2', x: '40', y: '40', category: 'PP', retestCost: '2' },
+            { id: 'A3', x: '90', y: '10', category: 'PE', retestCost: '5' },
           ],
         },
         {
           name: 'F2', offsetX: '100', offsetY: '0',
           particles: [
-            { id: 'B1', x: '-8', y: '12', category: 'PE' },
-            { id: 'B2', x: '-6', y: '9', category: 'PE' },
+            { id: 'B1', x: '-8', y: '12', category: 'PE', retestCost: '3' },
+            { id: 'B2', x: '-6', y: '9', category: 'PE', retestCost: '6' },
           ],
         },
         {
           name: 'F3', offsetX: '0', offsetY: '100',
           particles: [
-            { id: 'C1', x: '40', y: '-58', category: 'PP' },
-            { id: 'C2', x: '5', y: '5', category: 'PET' },
+            { id: 'C1', x: '40', y: '-58', category: 'PP', retestCost: '3' },
+            { id: 'C2', x: '5', y: '5', category: 'PET', retestCost: '1' },
+            { id: 'C3', x: '90', y: '-90', category: 'PET', retestCost: '1' },
           ],
         },
       ],
@@ -169,7 +215,7 @@
     clearIssues();
     hideResult();
     render();
-    submitHint.textContent = '已载入示例，可直接发起去重裁决。';
+    submitHint.textContent = '已载入示例，可先发起去重裁决，再发起异类近邻复测计划。';
   });
 
   function clearIssues() {
@@ -202,6 +248,74 @@
 
   function hideResult() {
     resultPanel.classList.add('hidden');
+    lastResult = null;
+    lastPlan = null;
+    verdictStale = false;
+    planRequestId += 1;
+    renderPlan(null);
+  }
+
+  function obsChip(o) {
+    return esc(o.fieldName) + ' / ' + esc(o.particleId) +
+      '（' + esc(o.category) + '，滤膜 (' + o.filterX + ', ' + o.filterY + ')' +
+      '，最终颗粒 #' + o.finalParticleId + '）';
+  }
+
+  function renderPlan(plan) {
+    planSummaryEl.innerHTML = '';
+    planRetestsEl.innerHTML = '';
+    planUnselectedEl.innerHTML = '';
+    planJsonEl.textContent = '';
+    planJsonWrap.hidden = true;
+    if (!plan) {
+      planHintEl.textContent = !lastResult
+        ? ''
+        : verdictStale
+          ? '草稿在裁决后已修改，旧计划已作废；请重新发起去重裁决后再发起复测计划。'
+          : '裁决已完成，可发起异类近邻复测计划。';
+      planButton.disabled = !lastResult || verdictStale;
+      return;
+    }
+    planButton.disabled = false;
+
+    if (plan.pairCount === 0) {
+      planSummaryEl.innerHTML =
+        '<span class="plan-ok">本次没有需排除的异类近邻：</span>' +
+        '在复测半径 ' + plan.radius + ' 内不存在“不同视野、类别不同且横纵差均不超过半径”的观测对。';
+      planHintEl.textContent = '';
+      return;
+    }
+
+    planSummaryEl.innerHTML =
+      '异类近邻对 <span class="ok">' + plan.pairCount + '</span> 对，' +
+      '参与观测 ' + plan.participantCount + ' 个；' +
+      '需复测 <span class="ok">' + plan.selectedCount + '</span> 项，' +
+      '最小复测总代价 <span class="ok">' + plan.totalRetestCost + '</span>（复测半径 ' + plan.radius + '）。';
+
+    planRetestsEl.innerHTML = plan.retests.map(function (r) {
+      var evidence = r.coveredPairs.map(function (ev) {
+        return '<li>' + obsChip(ev.observation) +
+          '<span class="dx-badge">横差 ' + ev.dx + ' / 纵差 ' + ev.dy + '</span></li>';
+      }).join('');
+      return '<div class="retest-card">' +
+        '<header><span class="pid">复测 #' + r.sequence + '</span>' +
+        '<span class="badge">' + obsChip(r.observation) + '</span>' +
+        '<span>复测代价：<strong>' + r.retestCost + '</strong></span></header>' +
+        '<div class="evidence-title">覆盖的异类近邻证据（' + r.coveredPairs.length + ' 对）：</div>' +
+        '<ul class="evidence-list">' + evidence + '</ul>' +
+        '</div>';
+    }).join('');
+
+    if (plan.unselectedObservations.length > 0) {
+      planUnselectedEl.innerHTML =
+        '<div class="unselected-title">参与近邻对但本次无需复测的观测（' +
+        plan.unselectedObservations.length + ' 个，其近邻证据已由复测项覆盖）：</div>' +
+        '<div class="unselected-list">' +
+        plan.unselectedObservations.map(function (o) {
+          return '<span class="unselected-chip">' + obsChip(o) + '（代价 ' + o.retestCost + '）</span>';
+        }).join('') + '</div>';
+    }
+    planHintEl.textContent = '';
   }
 
   function renderResult(result) {
@@ -232,6 +346,10 @@
 
     resultJson.textContent = JSON.stringify(result, null, 2);
     resultPanel.classList.remove('hidden');
+    lastResult = result;
+    verdictStale = false;
+    lastPlan = null;
+    renderPlan(null);
     resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -243,21 +361,35 @@
     return Number.isNaN(n) ? s : n;
   }
 
-  document.getElementById('btn-submit').addEventListener('click', function () {
-    clearIssues();
-    hideResult();
-    var payload = {
+  // 同一草稿：两个接口共用这份录入（复测接口额外携带 radius 与每候选 retestCost）
+  function buildPayload(withRetest) {
+    return {
       tolerance: num(state.tolerance),
+      radius: withRetest ? num(state.radius) : undefined,
       fields: state.fields.map(function (f, fi) {
-        return {
+        var field = {
           name: String(f.name || '').trim() || ('F' + (fi + 1)),
           offset: { x: num(f.offsetX), y: num(f.offsetY) },
           particles: f.particles.map(function (p) {
-            return { id: String(p.id == null ? '' : p.id), x: num(p.x), y: num(p.y), category: String(p.category == null ? '' : p.category) };
+            var particle = {
+              id: String(p.id == null ? '' : p.id),
+              x: num(p.x),
+              y: num(p.y),
+              category: String(p.category == null ? '' : p.category),
+            };
+            if (withRetest) particle.retestCost = num(p.retestCost);
+            return particle;
           }),
         };
+        return field;
       }),
     };
+  }
+
+  document.getElementById('btn-submit').addEventListener('click', function () {
+    clearIssues();
+    hideResult();
+    var payload = buildPayload(false);
 
     submitHint.textContent = '裁决中…';
     fetch('/api/particle-deduplications', {
@@ -287,5 +419,51 @@
       });
   });
 
+  planButton.addEventListener('click', function () {
+    if (!lastResult || verdictStale) return;
+    clearIssues();
+    var myRequest = ++planRequestId;
+    // 请求开始即清空旧计划：失败、输入变化或新请求都不得保留旧内容
+    lastPlan = null;
+    renderPlan(null);
+    planButton.disabled = true;
+    planHintEl.textContent = '复测计划求解中…';
+
+    fetch('/api/particle-retest-plans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPayload(true)),
+    })
+      .then(function (res) {
+        return res.json().then(function (body) { return { res: res, body: body }; });
+      })
+      .then(function (r) {
+        if (myRequest !== planRequestId) return; // 已被更新的请求或草稿修改取代
+        if (!r.res.ok) {
+          var err = (r.body && r.body.error) || {};
+          var issues = Array.isArray(err.issues) && err.issues.length > 0
+            ? err.issues
+            : [{ path: '', message: err.message || ('请求失败（HTTP ' + r.res.status + '）') }];
+          showIssues(issues, err.message);
+          planHintEl.textContent = '复测计划请求失败，旧计划已清除（草稿已保留）。';
+          planButton.disabled = false;
+          return;
+        }
+        lastPlan = r.body.plan;
+        renderPlan(lastPlan);
+        planJsonEl.textContent = JSON.stringify(r.body, null, 2);
+        planJsonWrap.hidden = false;
+      })
+      .catch(function () {
+        if (myRequest !== planRequestId) return;
+        showIssues([{ path: '', message: '网络或服务器错误，复测计划未生成（草稿已保留，旧计划已清除）' }]);
+        planHintEl.textContent = '复测计划请求失败，旧计划已清除。';
+        planButton.disabled = false;
+      });
+  });
+
+  // 草稿被取代（重新裁决 / 清空 / 载入示例）时 hideResult 已清空计划区。
+
   render();
+  renderPlan(null);
 })();

@@ -81,6 +81,8 @@ button.small { padding: .15rem .5rem; font-size: .85rem; }
 }
 .tolerance-row label { color: var(--muted); }
 .tolerance-row input { width: 7rem; }
+.tolerance-row .radius-label { margin-left: 1.2rem; }
+.cost-input { min-width: 4.5rem !important; }
 
 input {
   font: inherit;
@@ -197,6 +199,94 @@ table.particles td input { min-width: 5rem; }
   border-radius: 8px;
   overflow: auto;
   font-size: .82rem;
+}
+
+/* 裁决结果与复测计划并排展示 */
+.result-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+.result-col { min-width: 0; }
+.result-col h3 {
+  margin: 0 0 .6rem;
+  font-size: 1rem;
+  color: var(--accent-dark);
+}
+#plan-col {
+  border-left: 1px dashed var(--line);
+  padding-left: 1rem;
+}
+.plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .6rem;
+  flex-wrap: wrap;
+  margin-bottom: .4rem;
+}
+.plan-head h3 { margin: 0; }
+.plan-head button { padding: .35rem .8rem; font-size: .9rem; }
+.plan-summary {
+  font-weight: 600;
+  color: var(--accent-dark);
+  margin: .5rem 0 .7rem;
+}
+.plan-summary .ok { color: var(--ok); }
+.plan-ok { color: var(--ok); font-weight: 700; }
+
+.retest-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--ok);
+  border-radius: 8px;
+  padding: .6rem .8rem;
+  margin-bottom: .7rem;
+  background: #fbfdfd;
+}
+.retest-card header {
+  display: flex;
+  gap: .7rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin-bottom: .4rem;
+  font-size: .9rem;
+}
+.retest-card .pid { font-weight: 700; }
+.evidence-title { color: var(--muted); font-size: .85rem; margin-bottom: .25rem; }
+.evidence-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: .2rem;
+  font-size: .85rem;
+}
+.evidence-list li { display: flex; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
+.dx-badge {
+  background: var(--chip);
+  color: var(--accent-dark);
+  border-radius: 4px;
+  padding: 0 .4rem;
+  font-size: .78rem;
+  white-space: nowrap;
+}
+.unselected-title {
+  color: var(--muted);
+  font-size: .85rem;
+  margin: .6rem 0 .35rem;
+}
+.unselected-list { display: flex; gap: .35rem; flex-wrap: wrap; }
+.unselected-chip {
+  background: #f3f6f8;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .05rem .55rem;
+  font-size: .8rem;
+}
+
+@media (max-width: 1100px) {
+  .result-grid { grid-template-columns: 1fr; }
+  #plan-col { border-left: none; padding-left: 0; border-top: 1px dashed var(--line); padding-top: .8rem; }
 }
 
 .hidden { display: none !important; }
