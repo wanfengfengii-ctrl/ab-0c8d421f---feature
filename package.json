@@ -1,0 +1,17 @@
+{
+  "name": "microplastic-particle-dedup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "海洋微塑料监测站：同一滤膜相邻显微视野拼接计数的颗粒去重裁决服务",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "verify": "node scripts/verify.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

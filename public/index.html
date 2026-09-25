@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>海洋微塑料监测站 · 显微视野拼接去重裁决</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>海洋微塑料监测站 · 显微视野拼接去重裁决</h1>
+    <p>录入同一滤膜 3–5 个相邻显微视野的平移位置与颗粒候选，系统按全局最优规则裁决重叠带内的重复计数，避免同一颗粒被重复计数。</p>
+  </header>
+
+  <main>
+    <section class="panel" id="input-panel">
+      <div class="panel-title">
+        <h2>① 录入视野与颗粒候选</h2>
+        <div class="actions">
+          <button id="btn-sample" type="button">载入示例</button>
+          <button id="btn-clear" type="button">清空草稿</button>
+        </div>
+      </div>
+
+      <div class="tolerance-row">
+        <label for="tolerance">容差（滤膜坐标横 / 纵方向允许的最大偏差，整数）</label>
+        <input id="tolerance" data-path="tolerance" type="number" step="1" min="0">
+      </div>
+
+      <div id="fields"></div>
+      <button id="btn-add-field" type="button" class="ghost">＋ 添加视野</button>
+
+      <div id="issues" class="issues hidden" role="alert"></div>
+
+      <div class="submit-row">
+        <button id="btn-submit" class="primary" type="button">发起去重裁决</button>
+        <span id="submit-hint" class="hint"></span>
+      </div>
+    </section>
+
+    <section class="panel hidden" id="result-panel">
+      <h2>② 裁决结果</h2>
+      <div id="result-summary" class="result-summary"></div>
+      <div id="result-particles"></div>
+      <details class="raw-json">
+        <summary>原始响应 JSON</summary>
+        <pre id="result-json"></pre>
+      </details>
+    </section>
+  </main>
+
+  <datalist id="categories">
+    <option value="PE"></option>
+    <option value="PP"></option>
+    <option value="PS"></option>
+    <option value="PET"></option>
+    <option value="PVC"></option>
+    <option value="PA"></option>
+    <option value="PC"></option>
+    <option value="PMMA"></option>
+    <option value="其他"></option>
+  </datalist>
+
+  <script src="/app.js"></script>
+</body>
+</html>
